@@ -153,7 +153,7 @@ def display_student_marks(conn, rollno):
         FROM Students
         JOIN Marks ON Students.rollno = Marks.rollno
         WHERE Students.rollno = ?
-        ORDER BY Marks.marks DESC
+        ORDER BY Marks.subject
     """, (rollno,))
     rows = cur.fetchall()
     if not rows:
@@ -164,10 +164,41 @@ def display_student_marks(conn, rollno):
         roll, name, subject, marks = row
         print(f"{roll:<5} {name:<20} {subject:<15} {marks:<5}")
 
+def display_student_ranking(conn):
+    cur = conn.cursor()
+    # Sum up all marks for each student and sort descending
+    cur.execute("""
+        SELECT s.rollno, s.name, SUM(m.marks) AS total_marks
+        FROM Students s
+        JOIN Marks m ON s.rollno = m.rollno
+        GROUP BY s.rollno, s.name
+        ORDER BY total_marks DESC
+    """)
+    rows = cur.fetchall()
+    if not rows:
+        print("No student records found.")
+        return
+    print(f"\n{'Rank':<5} {'Roll':<5} {'Name':<20} {'Total Marks':<12}")
+    rank = 1
+    for row in rows:
+        roll, name, total_marks = row
+        print(f"{rank:<5} {roll:<5} {name:<20} {total_marks:<12}")
+        rank += 1
+
 def student_menu(conn):
     print("\n--- Student View ---")
-    rollno = int(input("Enter your roll number: "))
-    display_student_marks(conn, rollno)
+    print("1. Check Your Marks")
+    print("2. Check Rank List")
+    choice = input("Enter choice: ")
+    
+    if choice == "1":
+        rollno = int(input("Enter your roll number: "))
+        display_student_marks(conn, rollno)
+    elif choice == "2":
+        print("\nFinal Ranking (All Students Sorted by Total Marks):")
+        display_student_ranking(conn)
+    else:
+        print("Invalid input.")
 
 # ---------- Main Menu ----------
 def main():
