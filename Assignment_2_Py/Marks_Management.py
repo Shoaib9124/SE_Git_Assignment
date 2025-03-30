@@ -9,145 +9,169 @@ subject.
 e) When all teachers have completed their updates, the database is sorted by total marks and
 made available for students to view.
 '''
-
 import sqlite3
 import os
 
 # ---------- Database Initialization ----------
 def initialize_db():
-    # Ensure a subdirectory "database" exists
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # Create a "database" folder inside that directory
     db_dir = os.path.join(current_dir, "database")
     if not os.path.exists(db_dir):
         os.makedirs(db_dir)
-    
-    # Create the database file inside the directory or connect to it
     db_path = os.path.join(db_dir, "students.db")
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
-    
-    # Create the Students table if it doesn't exist
+    # Create Students table (basic student info)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS Students (
             rollno INTEGER PRIMARY KEY,
-            name TEXT NOT NULL,
+            name TEXT NOT NULL
+        )
+    """)
+    # Create Marks table (stores marks for different subjects)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS Marks (
+            rollno INTEGER,
             subject TEXT NOT NULL,
-            marks1 INTEGER,
-            marks2 INTEGER,
-            marks3 INTEGER,
-            marks4 INTEGER,
-            marks5 INTEGER,
-            totalmarks INTEGER
+            marks INTEGER,
+            PRIMARY KEY (rollno, subject),
+            FOREIGN KEY (rollno) REFERENCES Students(rollno)
         )
     """)
     conn.commit()
     return conn
 
 # ---------- Teacher Functions ----------
-def add_student(conn, teacher_subject):
+def add_student(conn):
     name = input("Enter student name: ")
     rollno = int(input("Enter roll number: "))
-    # Enforce teacher's subject for the student record
-    subject = teacher_subject
-    print(f"Student subject is set to your subject: {subject}")
-    
-    # Get marks from user
-    marks = []
-    for i in range(1, 6):
-        mark = int(input(f"Enter marks{i}: "))
-        marks.append(mark)
-    total = sum(marks)
-    
     try:
-        conn.execute("""
-            INSERT INTO Students (rollno, name, subject, marks1, marks2, marks3, marks4, marks5, totalmarks)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (rollno, name, subject, marks[0], marks[1], marks[2], marks[3], marks[4], total))
+        conn.execute("INSERT INTO Students (rollno, name) VALUES (?, ?)", (rollno, name))
         conn.commit()
         print("Student added successfully!")
-    except sqlite3.IntegrityError as e:
-        print("Error inserting student:", e)
+    except sqlite3.IntegrityError:
+        print("Error: Roll number already exists.")
 
-def update_marks(conn, teacher_subject):
-    rollno = int(input("Enter roll number of the student to update: "))
+def add_or_update_marks(conn, teacher_subject):
+    rollno = int(input("Enter roll number: "))
     cur = conn.cursor()
-    
-    # Check if student exists and belongs to the teacher's subject
-    cur.execute("SELECT subject FROM Students WHERE rollno = ?", (rollno,))
+    # Check if student exists
+    cur.execute("SELECT name FROM Students WHERE rollno = ?", (rollno,))
     row = cur.fetchone()
     if row is None:
-        print("Student not found.")
+        print("Error: Student not found.")
         return
-    if row[0] != teacher_subject:
-        print("You can only update marks for your own subject!")
-        return
+    mark = int(input(f"Enter marks for {teacher_subject}: "))
+    try:
+        # Insert new marks or update if record exists (using UPSERT syntax)
+        cur.execute("""
+            INSERT INTO Marks (rollno, subject, marks)
+            VALUES (?, ?, ?)
+            ON CONFLICT(rollno, subject) DO UPDATE SET marks=excluded.marks
+        """, (rollno, teacher_subject, mark))
+        conn.commit()
+        print(f"Marks for {teacher_subject} updated successfully!")
+    except sqlite3.Error as e:
+        print("Error updating marks:", e)
 
-    marks = []
-    for i in range(1, 6):
-        mark = int(input(f"Enter new marks{i}: "))
-        marks.append(mark)
-    total = sum(marks)
-    
-    cur.execute("""
-        UPDATE Students SET marks1 = ?, marks2 = ?, marks3 = ?, marks4 = ?, marks5 = ?, totalmarks = ?
-        WHERE rollno = ?
-    """, (marks[0], marks[1], marks[2], marks[3], marks[4], total, rollno))
+def update_marks(conn, teacher_subject):
+    # Teacher can update marks only for their subject.
+    rollno = int(input("Enter roll number: "))
+    cur = conn.cursor()
+    cur.execute("SELECT marks FROM Marks WHERE rollno = ? AND subject = ?", (rollno, teacher_subject))
+    row = cur.fetchone()
+    if row is None:
+        print(f"No marks found for {teacher_subject}. Use add/edit option first.")
+        return
+    mark = int(input(f"Enter new marks for {teacher_subject}: "))
+    cur.execute("UPDATE Marks SET marks = ? WHERE rollno = ? AND subject = ?", (mark, rollno, teacher_subject))
     conn.commit()
-    print("Marks updated successfully!")
+    print(f"Marks for {teacher_subject} updated successfully!")
+
+def display_students_by_subject(conn, teacher_subject):
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT Students.rollno, Students.name, Marks.subject, Marks.marks
+        FROM Students
+        JOIN Marks ON Students.rollno = Marks.rollno
+        WHERE Marks.subject = ?
+        ORDER BY Students.rollno
+    """, (teacher_subject,))
+    rows = cur.fetchall()
+    if not rows:
+        print("No records found for your subject.")
+        return
+    print(f"\n{'Roll':<5} {'Name':<20} {'Subject':<15} {'Marks':<5}")
+    for row in rows:
+        roll, name, subject, marks = row
+        print(f"{roll:<5} {name:<20} {subject:<15} {marks:<5}")
+
+def display_all_students(conn):
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT Students.rollno, Students.name, Marks.subject, Marks.marks
+        FROM Students
+        JOIN Marks ON Students.rollno = Marks.rollno
+        ORDER BY Marks.marks DESC
+    """)
+    rows = cur.fetchall()
+    if not rows:
+        print("No student records found.")
+        return
+    print(f"\n{'Roll':<5} {'Name':<20} {'Subject':<15} {'Marks':<5}")
+    for row in rows:
+        roll, name, subject, marks = row
+        print(f"{roll:<5} {name:<20} {subject:<15} {marks:<5}")
 
 def teacher_menu(conn, teacher_subject):
     while True:
         print("\n--- Teacher Menu ---")
         print("1. Add student")
-        print("2. Update marks")
+        print(f"2. Add/Edit marks for {teacher_subject}")
         print("3. Display students in your subject")
+        print("4. Display all students' marks")
         print("0. Logout")
         choice = input("Enter choice: ")
         if choice == "1":
-            add_student(conn, teacher_subject)
+            add_student(conn)
         elif choice == "2":
-            update_marks(conn, teacher_subject)
+            add_or_update_marks(conn, teacher_subject)
         elif choice == "3":
-            # Display only students for teacher's subject, sorted by roll number
-            display_students(conn, teacher_subject, sort_by_total=False)
+            display_students_by_subject(conn, teacher_subject)
+        elif choice == "4":
+            display_all_students(conn)
         elif choice == "0":
             break
         else:
             print("Invalid input.")
 
 # ---------- Student Functions ----------
-def student_menu(conn):
-    print("\n--- Student View ---")
-    # Display all students sorted by total marks (highest first)
-    display_students(conn, sort_by_total=True)
-
-def display_students(conn, teacher_subject=None, sort_by_total=False):
+def display_student_marks(conn, rollno):
     cur = conn.cursor()
-    if teacher_subject:
-        # Teacher view: filter by subject, sort by roll number
-        cur.execute("SELECT * FROM Students WHERE subject = ? ORDER BY rollno", (teacher_subject,))
-    else:
-        if sort_by_total:
-            # Student view: sort by total marks in descending order
-            cur.execute("SELECT * FROM Students ORDER BY totalmarks DESC")
-        else:
-            cur.execute("SELECT * FROM Students ORDER BY rollno")
+    cur.execute("""
+        SELECT Students.rollno, Students.name, Marks.subject, Marks.marks
+        FROM Students
+        JOIN Marks ON Students.rollno = Marks.rollno
+        WHERE Students.rollno = ?
+        ORDER BY Marks.marks DESC
+    """, (rollno,))
     rows = cur.fetchall()
     if not rows:
-        print("No student records found.")
+        print("No records found for this roll number.")
         return
-
-    print(f"\n{'Roll':<5} {'Name':<20} {'Subject':<15} {'M1':<5} {'M2':<5} {'M3':<5} {'M4':<5} {'M5':<5} {'Total':<5}")
+    print(f"\n{'Roll':<5} {'Name':<20} {'Subject':<15} {'Marks':<5}")
     for row in rows:
-        roll, name, subject, m1, m2, m3, m4, m5, total = row
-        print(f"{roll:<5} {name:<20} {subject:<15} {m1:<5} {m2:<5} {m3:<5} {m4:<5} {m5:<5} {total:<5}")
+        roll, name, subject, marks = row
+        print(f"{roll:<5} {name:<20} {subject:<15} {marks:<5}")
+
+def student_menu(conn):
+    print("\n--- Student View ---")
+    rollno = int(input("Enter your roll number: "))
+    display_student_marks(conn, rollno)
 
 # ---------- Main Menu ----------
 def main():
     conn = initialize_db()
-    
     while True:
         print("\n--- Main Menu ---")
         print("1. Teacher Login")
@@ -163,7 +187,6 @@ def main():
             break
         else:
             print("Invalid input.")
-    
     conn.close()
 
 if __name__ == "__main__":
